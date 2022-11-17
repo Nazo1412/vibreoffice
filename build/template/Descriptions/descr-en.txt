@@ -1,2 +1,0 @@
-Vi Mode Extension for LibreOffice/OpenOffice
-
