@@ -1548,10 +1548,10 @@ End Sub
 
 
 Function ProcessSpecialKey(keyChar)
-    dim oCursor, oTextCursor, bMatched, bIsSpecial, bIsDelete
+    dim oCursor, oTextCursor, bMatched, bIsSpecial, bIsDelete, iIterations
     bMatched = True
     bIsSpecial = getSpecial() <> ""
-
+    iIterations = getMultiplier()
 
     If keyChar = "d" Or keyChar = "c" Or keyChar = "s" Or keyChar = "y" Then
         bIsDelete = (keyChar <> "y")
@@ -1615,7 +1615,10 @@ Function ProcessSpecialKey(keyChar)
 					If APP() <> "CALC" Then
 						setSpecial("c")
 						gotoMode(M_VISUAL)
-						ProcessMovementKey("l", True)
+						dim i
+						For i = 1 to iIterations
+							ProcessMovementKey("l", True)
+						Next i
 						yankSelection(True)
 						gotoMode(M_INSERT)	
 					Else

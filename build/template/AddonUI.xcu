@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<oor:component-data xmlns:oor="http://openoffice.org/2001/registry" 
+ xmlns:xs="http://www.w3.org/2001/XMLSchema" 
+ oor:name="Addons" oor:package="org.openoffice.Office">
+   <node oor:name="AddonUI">
+
+      <node oor:name="AddonMenu">
+
+         <node oor:name="vibreoffice.N001" oor:op="replace">
+            <prop oor:name="Context" oor:type="xs:string">
+               <value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.drawing.DrawingDocument,com.sun.star.presentation.PresentationDocument</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+               <value xml:lang="en">vibreoffice - start</value>
+            </prop>
+            <prop oor:name="URL" oor:type="xs:string">
+               <value>vnd.sun.star.script:vibreoffice.vibreoffice.startVibreoffice?language=Basic&amp;location=application</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+               <value>_self</value>
+            </prop>
+         </node>
+
+         <node oor:name="vibreoffice.N002" oor:op="replace">
+            <prop oor:name="Context" oor:type="xs:string">
+               <value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.drawing.DrawingDocument,com.sun.star.presentation.PresentationDocument</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+               <value xml:lang="en">vibreoffice - stop</value>
+            </prop>
+            <prop oor:name="URL" oor:type="xs:string">
+               <value>vnd.sun.star.script:vibreoffice.vibreoffice.stopVibreoffice?language=Basic&amp;location=application</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+               <value>_self</value>
+            </prop>
+         </node>
+
+         <node oor:name="vibreoffice.N003" oor:op="replace">
+            <prop oor:name="Context" oor:type="xs:string">
+               <value>com.sun.star.text.TextDocument,com.sun.star.sheet.SpreadsheetDocument,com.sun.star.drawing.DrawingDocument,com.sun.star.presentation.PresentationDocument</value>
+            </prop>
+            <prop oor:name="Title" oor:type="xs:string">
+               <value xml:lang="en">vibreoffice - toggle</value>
+            </prop>
+            <prop oor:name="URL" oor:type="xs:string">
+               <value>vnd.sun.star.script:vibreoffice.vibreoffice.toggleVibreoffice?language=Basic&amp;location=application</value>
+            </prop>
+            <prop oor:name="Target" oor:type="xs:string">
+               <value>_self</value>
+            </prop>
+         </node>         
+
+      </node>
+
+   </node>
+</oor:component-data>
