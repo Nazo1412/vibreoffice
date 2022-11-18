@@ -711,6 +711,22 @@ Else
 End If
 End Function
 
+Function formatVisual2VisualLine(Optional bKeepLastEOL)
+    If IsMissing(bKeepLastEOL) Then bKeepLastEOL = False
+    If APP() <> "CALC" Then
+        dim oTextCursor, oldEndPos
+        oTextCursor = getTextCursor()
+        getCursor().gotoRange(oTextCursor.getStart(), False)
+        getCursor().gotoStartOfLine(False)
+        getCursor().gotoRange(oTextCursor.getEnd(), True)
+        oldEndPos = getCursor().getPosition()
+        getCursor().gotoEndOfLine(True)
+        If Not bKeepLastEOL And getCursor().getPosition().Y() = oldEndPos.Y() Then
+            getCursor().goRight(1, True)
+        End If
+    End If
+End Function
+
 Function gotoMode(sMode)
     Select Case sMode
         Case M_NORMAL, M_DISABLED:
@@ -1513,7 +1529,7 @@ Function ProcessNormalKey(keyChar, modifiers, optional oEvent)
     End If
 
     ' Only 'x' or Special (dd, cc) can be done more than once
-    If keyChar <> "x" And keyChar <> "X" And getSpecial() = "" Then
+    If getSpecial() = "" Then
         iIterations = 1
     End If
     For i = 1 To iIterations
@@ -1608,18 +1624,16 @@ Function ProcessSpecialKey(keyChar)
             If keyChar = "d" Or keyChar = "y" Then gotoMode(M_NORMAL)
 
 
-        ' Enter Special mode: 'd', 'c', or 'y' ('s' => 'cl')
+        ' Enter Special mode: 'd', 'c', 'y' or 's'
         ElseIf MODE = M_NORMAL Then
-				' 's' => 'cl'
 				If keyChar = "s" Then
 					If APP() <> "CALC" Then
-						setSpecial("c")
-						gotoMode(M_VISUAL)
-						For i = 1 to iIterations
-							ProcessMovementKey("l", True)
-						Next i
+						getCursor().gotoRange(getCursor().getStart(), False)
+						getCursor().goRight(iIterations, True)
 						yankSelection(True)
-						gotoMode(M_INSERT)	
+						gotoMode(M_INSERT)
+						resetMultiplier()
+						resetSpecial(True)
 					Else
 						setSpecial("c")
 						gotoMode(M_VISUAL)		
@@ -1687,23 +1701,31 @@ Function ProcessSpecialKey(keyChar)
 
     ElseIf keyChar = "x" Or keyChar = "X" Then
 		If APP() <> "CALC" Then
-			oTextCursor = getTextCursor()
-			If keyChar = "X" And MODE <> M_VISUAL And MODE <> M_VISUAL_LINE Then
-				oTextCursor.collapseToStart()
-				oTextCursor.goLeft(1, True)
+			If MODE = M_NORMAL Then
+				getCursor().gotoRange(getCursor().getStart(), False)
+				If keyChar = "x" Then
+					getCursor().goRight(iIterations, True)
+				Else
+					getCursor().goLeft(iIterations, True)
+				End If
+				yankSelection(True)
+			ElseIf MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
+				If keyChar = "x" Then
+					yankSelection(True)
+				Else
+					formatVisual2VisualLine()
+					yankSelection(True)
+				End If
 			End If
-			getCurrentController().Select(oTextCursor)
-			yankSelection(True)
-
-			' Reset Cursor
-			cursorReset(oTextCursor)
 		Else
 			yankSelection(True)
 			simulate_KeyPress_Char("DELETE")
 		End If
 
         ' Goto NORMAL mode (in the case of VISUAL mode)
-        gotoMode(M_NORMAL)
+		gotoMode(M_NORMAL)
+		resetMultiplier()
+		resetSpecial(True)
 
     ElseIf keyChar = "D" Or keyChar = "C" Then
         If MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
@@ -1728,16 +1750,21 @@ Function ProcessSpecialKey(keyChar)
             gotoMode(M_INSERT)
         End IF
 
-    ' S only valid in NORMAL mode
-    ElseIf keyChar = "S" And MODE = M_NORMAL Then
+    ElseIf keyChar = "S" Then
 		If APP() <> "CALC" Then
-			ProcessMovementKey("^", False)
-			For i = 1 to iIterations-1
-				ProcessMovementKey("j", True)
-			Next i
-			ProcessMovementKey("$", True)
-			yankSelection(True)
-			gotoMode(M_INSERT)
+			If MODE = M_NORMAL Then
+				getCursor().gotoStartOfLine(False)
+				getCursor().goDown(iIterations - 1, True)
+				getCursor().gotoEndOfLine(True)
+				yankSelection(True)
+				gotoMode(M_INSERT)
+			ElseIf MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
+				formatVisual2VisualLine(True)
+				yankSelection(True)
+				gotoMode(M_INSERT)
+			End If
+			resetMultiplier()
+			resetSpecial(True)
 		End If
 
     Else
