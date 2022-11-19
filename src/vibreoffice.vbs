@@ -117,9 +117,12 @@ global VISUAL_BASE as object ' Position of line that is first selected when
 'global ACTIVE_CELL as object
 'global APP as string
 global LAST_SEARCH as string
+global LAST_FTSEARCH_MOVEMENTMODIFIER as string
+global LAST_FTSEARCH_KEYCHAR as string
 
 global logged2 as string
 
+global NO_NEXT_PARAGRAPH as boolean
 ' -----------
 ' Key Generation for Calc 
 ' -----------
@@ -691,39 +694,25 @@ End Sub
 
 ' Selects the current line and makes it the Visual base line for use with 
 ' VISUAL_LINE mode.
-Function formatVisualBase()
-If APP() <> "CALC" Then
-    dim oTextCursor
-    oTextCursor = getTextCursor()
-    VISUAL_BASE = getCursor().getPosition()
-
-    ' Select the current line by moving cursor to start of the bellow line and 
-    ' then back to the start of the current line.
-    getCursor().gotoEndOfLine(False)
-    If getCursor().getPosition().Y() = VISUAL_BASE.Y() Then
-        getCursor().goRight(1, False)
-    End If
-    getCursor().goLeft(1, True)
-    getCursor().gotoStartOfLine(True)
-Else
-	simulate_KeyPress_Char("HOME")
-	simulate_KeyPress_Char("END","SHIFT")
-End If
-End Function
-
-Function formatVisual2VisualLine(Optional bKeepLastEOL)
-    If IsMissing(bKeepLastEOL) Then bKeepLastEOL = False
+Function formatVisualBase() as Boolean
     If APP() <> "CALC" Then
-        dim oTextCursor, oldEndPos
+        dim oTextCursor
         oTextCursor = getTextCursor()
+        VISUAL_BASE = getCursor().getPosition()
         getCursor().gotoRange(oTextCursor.getStart(), False)
         getCursor().gotoStartOfLine(False)
+        oTextCursor.gotoEndOfParagraph(True)
         getCursor().gotoRange(oTextCursor.getEnd(), True)
-        oldEndPos = getCursor().getPosition()
-        getCursor().gotoEndOfLine(True)
-        If Not bKeepLastEOL And getCursor().getPosition().Y() = oldEndPos.Y() Then
+
+        If oTextCursor.gotoNextParagraph(False) Then
             getCursor().goRight(1, True)
+            NO_NEXT_PARAGRAPH = True
+        Else
+            NO_NEXT_PARAGRAPH = False
         End If
+    Else
+        simulate_KeyPress_Char("HOME")
+        simulate_KeyPress_Char("END","SHIFT")
     End If
 End Function
 
@@ -1339,6 +1328,7 @@ Function ProcessModeKey(oEvent)
         ' Insert modes
         Case "i", "a", "I", "A", "o", "O":
 			If APP() <> "CALC" Then
+				If oEvent.KeyChar = "i" Then getCursor().collapseToStart()
 				If oEvent.KeyChar = "a" And NOT oTextCursor.isEndOfParagraph() Then getCursor().goRight(1, False)
 				If oEvent.KeyChar = "I" Then ProcessMovementKey("^")
 				If oEvent.KeyChar = "A" Then ProcessMovementKey("$")
@@ -1353,13 +1343,9 @@ Function ProcessModeKey(oEvent)
 
             If KeyChar = "o" Then
 				If APP() <> "CALC" Then
-				    ProcessMovementKey("$")
-                	ProcessMovementKey("l")
-					getCursor().setString(chr(13))
-					If Not getCursor().isAtStartOfLine() Then
-						getCursor().setString(chr(13) & chr(13))
-						ProcessMovementKey("l")
-					End If
+					If Not oTextCursor.gotoNextParagraph(False) Then oTextCursor.gotoEndOfParagraph(False)
+					getCursor().gotoRange(oTextCursor.getStart(), False)
+					simulate_KeyPress_Char("RETURN")
 				Else
 					insertRow(1)
 					ProcessMovementKey("j")
@@ -1368,13 +1354,9 @@ Function ProcessModeKey(oEvent)
 
             If KeyChar = "O" Then
 				If APP() <> "CALC" Then
-				    ProcessMovementKey("^")
-					getCursor().setString(chr(13))
-					If Not getCursor().isAtStartOfLine() Then
-						ProcessMovementKey("h")
-						getCursor().setString(chr(13))
-						ProcessMovementKey("l")
-					End If
+					oTextCursor.gotoStartOfParagraph(False)
+					getCursor().gotoRange(oTextCursor.getStart(), False)
+					simulate_KeyPress_Char("RETURN")
 				Else
 					insertRow(0)
 				End If
@@ -1569,7 +1551,7 @@ Function ProcessSpecialKey(keyChar)
     bIsSpecial = getSpecial() <> ""
     iIterations = getMultiplier()
 
-    If keyChar = "d" Or keyChar = "c" Or keyChar = "s" Or keyChar = "y" Then
+    If keyChar = "d" Or keyChar = "c" Or keyChar = "y" Then
         bIsDelete = (keyChar <> "y")
 
         ' Special Cases: 'dd' and 'cc'
@@ -1620,35 +1602,17 @@ Function ProcessSpecialKey(keyChar)
 
             yankSelection(bIsDelete)
 
-            If keyChar = "c" Or keyChar = "s" Then gotoMode(M_INSERT)
+            If keyChar = "c" Then gotoMode(M_INSERT)
             If keyChar = "d" Or keyChar = "y" Then gotoMode(M_NORMAL)
 
 
-        ' Enter Special mode: 'd', 'c', 'y' or 's'
+        ' Enter Special mode: 'd', 'c' or 'y'
         ElseIf MODE = M_NORMAL Then
-				If keyChar = "s" Then
-					If APP() <> "CALC" Then
-						getCursor().gotoRange(getCursor().getStart(), False)
-						getCursor().goRight(iIterations, True)
-						yankSelection(True)
-						gotoMode(M_INSERT)
-						resetMultiplier()
-						resetSpecial(True)
-					Else
-						setSpecial("c")
-						gotoMode(M_VISUAL)		
-						yankSelection(True)
-						simulate_KeyPress_Char("DELETE")	
-						gotoMode(M_INSERT)	
-					End If
-				Else
-					setSpecial(keyChar)
-					gotoMode(M_VISUAL)
-				End If
-
+            setSpecial(keyChar)
+            gotoMode(M_VISUAL)
         End If
 
-    ' If is 'r' for replace
+   
     ElseIf keyChar = "r" Then
 		If APP() <> "CALC" Then
 			setSpecial("r")
@@ -1699,33 +1663,68 @@ Function ProcessSpecialKey(keyChar)
     ElseIf bIsSpecial Then
         bMatched = False
 
-    ElseIf keyChar = "x" Or keyChar = "X" Then
-		If APP() <> "CALC" Then
-			If MODE = M_NORMAL Then
-				getCursor().gotoRange(getCursor().getStart(), False)
-				If keyChar = "x" Then
-					getCursor().goRight(iIterations, True)
-				Else
-					getCursor().goLeft(iIterations, True)
-				End If
-				yankSelection(True)
-			ElseIf MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
-				If keyChar = "x" Then
-					yankSelection(True)
-				Else
-					formatVisual2VisualLine()
-					yankSelection(True)
-				End If
-			End If
-		Else
-			yankSelection(True)
-			simulate_KeyPress_Char("DELETE")
-		End If
+    ElseIf keyChar = "s" Or keyChar = "S" Or keyChar = "x" Or keyChar = "X" Then
+        If APP() <> "CALC" Then
+            dim bNoNextParagraph
+            If MODE = M_NORMAL Then
+                dim length
+                oTextCursor = getTextCursor()
+                oTextCursor.collapseToStart()
+                getCursor().collapseToStart()
+                If keyChar = "x" or keyChar = "s" Then
+                    oTextCursor.gotoEndOfParagraph(True)
+                    length = len(oTextCursor.getString())
+                    If iIterations > length Then iIterations = length
+                    getCursor().goRight(iIterations, True)
+                ElseIf keyChar = "X" Then
+                    oTextCursor.gotoStartOfParagraph(True)
+                    length = len(oTextCursor.getString())
+                    If iIterations > length Then iIterations = length
+                    getCursor().goLeft(iIterations, True)
+                Else
+                    'getCursor().goDown(iIterations, True)
+                    bNoNextParagraph = formatVisualBase()
+                End If
+            ElseIf MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
+                If keyChar = "X" or keyChar = "S" Then
+                    bNoNextParagraph = formatVisualBase()
+                End If
+            End If
 
-        ' Goto NORMAL mode (in the case of VISUAL mode)
-		gotoMode(M_NORMAL)
-		resetMultiplier()
-		resetSpecial(True)
+            If keyChar = "S" Then
+                oTextCursor = getTextCursor()
+                If NO_NEXT_PARAGRAPH Then
+                    yankSelection(False)
+                    simulate_KeyPress_Char("RETURN")
+                    Wait 5
+                    getCursor().goUp(1, False)
+                Else
+                    yankSelection(True)
+                End If
+            Else
+                yankSelection(True)
+            End If
+
+            If keyChar = "s" or keyChar = "S" Then
+                gotoMode(M_INSERT)
+            Else
+                gotoMode(M_NORMAL)
+            End If
+            resetMultiplier()
+        Else
+            If keyChar = "s" Then
+                setSpecial("c")
+                gotoMode(M_VISUAL)		
+                yankSelection(True)
+                simulate_KeyPress_Char("DELETE")	
+                gotoMode(M_INSERT)	
+            ElseIf keyChar = "x" Or keyChar = "X" Then
+                yankSelection(True)
+                simulate_KeyPress_Char("DELETE")
+                gotoMode(M_NORMAL)
+            End If
+        End If
+
 
     ElseIf keyChar = "D" Or keyChar = "C" Then
         If MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
@@ -1749,23 +1748,6 @@ Function ProcessSpecialKey(keyChar)
         ElseIf keyChar = "C" Then
             gotoMode(M_INSERT)
         End IF
-
-    ElseIf keyChar = "S" Then
-		If APP() <> "CALC" Then
-			If MODE = M_NORMAL Then
-				getCursor().gotoStartOfLine(False)
-				getCursor().goDown(iIterations - 1, True)
-				getCursor().gotoEndOfLine(True)
-				yankSelection(True)
-				gotoMode(M_INSERT)
-			ElseIf MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
-				formatVisual2VisualLine(True)
-				yankSelection(True)
-				gotoMode(M_INSERT)
-			End If
-			resetMultiplier()
-			resetSpecial(True)
-		End If
 
     Else
         bMatched = False
@@ -1979,8 +1961,9 @@ Function ProcessMovementKey(keyChar, Optional bExpand, Optional keyModifiers, Op
 			' f,F,t,T searching
 		Case "f", "t", "F", "T":
 		'If APP() <> "CALC" Then
-			bMatched  = ProcessSearchKey(oTextCursor, getMovementModifier(), keyChar, bExpand)
-                LAST_SEARCH = oEvent.keyChar
+			bMatched = ProcessSearchKey(oTextCursor, getMovementModifier(), keyChar, bExpand)
+			LAST_FTSEARCH_MOVEMENTMODIFIER = getMovementModifier()
+			LAST_FTSEARCH_KEYCHAR = oEvent.keyChar
 		'End If
 		Case "i", "a":
 			bMatched = ProcessInnerKey(oTextCursor, getMovementModifier(), keyChar, bExpand)
@@ -1996,6 +1979,14 @@ Function ProcessMovementKey(keyChar, Optional bExpand, Optional keyModifiers, Op
 	' ---------------------------------
 
     ' Search repetition
+	ElseIf keyChar = ";" Then
+			
+		bMatched = ProcessSearchKey(oTextCursor, LAST_FTSEARCH_MOVEMENTMODIFIER, LAST_FTSEARCH_KEYCHAR, bExpand)
+			
+		If Not bMatched Then
+			bSetCursor = False
+		End If
+	
     ElseIf keyChar = "n" or keyChar = "N" Then
         If keyChar = "n" Then
             ' MsgBox("n: " & LAST_SEARCH)
