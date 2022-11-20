@@ -117,12 +117,12 @@ global VISUAL_BASE as object ' Position of line that is first selected when
 'global ACTIVE_CELL as object
 'global APP as string
 global LAST_SEARCH as string
+global LAST_SEARCH_IS_BACKWARDS as boolean
 global LAST_FTSEARCH_MOVEMENTMODIFIER as string
 global LAST_FTSEARCH_KEYCHAR as string
 
 global logged2 as string
 
-global NO_NEXT_PARAGRAPH as boolean
 ' -----------
 ' Key Generation for Calc 
 ' -----------
@@ -234,14 +234,21 @@ Function getCursor
 	End If
 End Function
 
-Sub setTextCursor
+Sub setTextCursor()
 	If APP() <> "CALC" Then
 		On Error Goto ErrorHandler
 		dim oCursor
 		oCursor = getCursor()
-		dim oText 
-		oText = oCursor.getText()
-		TEXT_CURSOR = oText.createTextCursorByRange(oCursor)
+		If Not isempty(oCursor.TextTable) Then
+			dim oTable, oCell
+			oTable = ThisComponent.TextTables.getByName(oCursor.TextTable.LinkDisplayName)
+			oCell = oTable.getCellByName(oCursor.Cell.CellName)
+			TEXT_CURSOR = oCell.createTextCursorByRange(oCursor)
+		Else
+			dim oText 
+			oText = oCursor.getText()
+			TEXT_CURSOR = oText.createTextCursorByRange(oCursor)
+		End If
 		Exit Sub
 		
 	ErrorHandler:
@@ -252,7 +259,7 @@ Sub setTextCursor
 	End If
 End Sub
 
-Function getTextCursor
+Function getTextCursor()
 	setTextCursor() ' temp
     getTextCursor = TEXT_CURSOR
 End Function
@@ -694,7 +701,7 @@ End Sub
 
 ' Selects the current line and makes it the Visual base line for use with 
 ' VISUAL_LINE mode.
-Function formatVisualBase() as Boolean
+Function formatVisualBase()
     If APP() <> "CALC" Then
         dim oTextCursor
         oTextCursor = getTextCursor()
@@ -706,14 +713,17 @@ Function formatVisualBase() as Boolean
 
         If oTextCursor.gotoNextParagraph(False) Then
             getCursor().goRight(1, True)
-            NO_NEXT_PARAGRAPH = True
+            formatVisualBase = True
         Else
-            NO_NEXT_PARAGRAPH = False
+            formatVisualBase = False
         End If
     Else
         simulate_KeyPress_Char("HOME")
         simulate_KeyPress_Char("END","SHIFT")
     End If
+End Function
+
+Function insertLine()
 End Function
 
 Function gotoMode(sMode)
@@ -771,9 +781,21 @@ Sub searchAndSet(oTextCursor, sText, bIsBackwards)
     dim oFoundRange	    
     oFoundRange = thisComponent.findNext(oStartRange, oSearchDesc)	    
 	If not (oFoundRange is Nothing) Then
-		oTextCursor.gotoRange(oFoundRange, False)
-		getCurrentController().Select(oTextCursor)
-		setMode(M_VISUAL)
+		Dim oText, oTable, oCell, oTextCursor2
+		If Not isempty(oFoundRange.TextTable) Then
+			oTable = ThisComponent.TextTables.getByName(oFoundRange.TextTable.LinkDisplayName)
+			oCell = oTable.getCellByName(oFoundRange.Cell.CellName)
+			oTextCursor2 = oCell.createTextCursorByRange(oFoundRange)
+		Else
+			oTextCursor2 = ThisComponent.getText().createTextCursorByRange(oFoundRange)
+		End If
+
+		'setMode(M_VISUAL)
+
+		'Search result would not be highlighted
+		oTextCursor2.collapseToStart()
+		getCurrentController().Select(oTextCursor2)
+		setMode(M_NORMAL)
 	End If
 	Else
 		simulate_KeyPress_Char("F","CTRL")
@@ -1230,8 +1252,14 @@ Function ProcessGlobalKey(oEvent)
 				bMatched = False
 			Else
 				' Move cursor back if was in INSERT (but stay on same line)
-				If MODE <> M_NORMAL And Not getCursor().isAtStartOfLine() Then
-					getCursor().goLeft(1, False)
+				
+				'Ths line throws error when cursor selected 2 cells across table
+				'If MODE <> M_NORMAL And Not getCursor().isAtStartOfLine() Then
+
+				If MODE = M_INSERT Then
+					If Not getCursor().isAtStartOfLine() Then
+						getCursor().goLeft(1, False)
+					End If
 				End If
 				bMatched = True
 			End If
@@ -1343,9 +1371,10 @@ Function ProcessModeKey(oEvent)
 
             If KeyChar = "o" Then
 				If APP() <> "CALC" Then
-					If Not oTextCursor.gotoNextParagraph(False) Then oTextCursor.gotoEndOfParagraph(False)
+					oTextCursor.gotoEndOfParagraph(False)
+					oTextCursor.Text.insertControlCharacter(oTextCursor, _
+						com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK, False)
 					getCursor().gotoRange(oTextCursor.getStart(), False)
-					simulate_KeyPress_Char("RETURN")
 				Else
 					insertRow(1)
 					ProcessMovementKey("j")
@@ -1354,9 +1383,18 @@ Function ProcessModeKey(oEvent)
 
             If KeyChar = "O" Then
 				If APP() <> "CALC" Then
-					oTextCursor.gotoStartOfParagraph(False)
+					dim bNoPrevParagraph : bNoPrevParagraph = False
+
+					If oTextCursor.gotoPreviousParagraph(False) Then
+						oTextCursor.gotoEndOfParagraph(False)
+					Else
+						oTextCursor.gotoStartOfParagraph(False)
+						bNoPrevParagraph = True
+					End If
+					oTextCursor.Text.insertControlCharacter(oTextCursor, _
+						com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK, False)
 					getCursor().gotoRange(oTextCursor.getStart(), False)
-					simulate_KeyPress_Char("RETURN")
+					If bNoPrevParagraph Then getCursor().goLeft(1, False)
 				Else
 					insertRow(0)
 				End If
@@ -1392,6 +1430,7 @@ Function ProcessNormalKey(keyChar, modifiers, optional oEvent)
     ' 1. Check Movement Key
     ' ----------------------
     iIterations = getMultiplier()
+    If keyChar = "G" Then iIterations = 1
     sSpecial = getSpecial()
     bMatched = False
     bMatchedMovement = False
@@ -1488,9 +1527,8 @@ Function ProcessNormalKey(keyChar, modifiers, optional oEvent)
     	dim sInput
     	sInput = InputBox(sDir, sDir)
     	If sInput <> "" Then
-    		dim bIsBackwards
-	 	    bIsBackwards = (keyChar = "?")
-		    searchAndSet(getTextCursor(), sInput, bIsBackwards)
+	 	    LAST_SEARCH_IS_BACKWARDS = (keyChar = "?")
+		    searchAndSet(getTextCursor(), sInput, LAST_SEARCH_IS_BACKWARDS)
 			LAST_SEARCH = sInput
 	   		ProcessNormalKey = True
 	        Exit Function	
@@ -1547,6 +1585,7 @@ End Sub
 
 Function ProcessSpecialKey(keyChar)
     dim i, oCursor, oTextCursor, bMatched, bIsSpecial, bIsDelete, iIterations
+    dim bNoNextParagraph
     bMatched = True
     bIsSpecial = getSpecial() <> ""
     iIterations = getMultiplier()
@@ -1563,17 +1602,16 @@ Function ProcessSpecialKey(keyChar)
 
 
 				If APP() <> "CALC" Then
-					 'ProcessMovementKey("^", False)
-                     'ProcessMovementKey("j", True)
-            	' A bit hacky, but works
-					oCursor = getCursor()
-					oCursor.gotoStartOfLine(False)
-					oCursor.gotoEndOfLine(True)                
-
+					bNoNextParagraph = formatVisualBase()
 					oTextCursor = getTextCursor()
-					'oTextCursor.goRight(1, True)
-					getCurrentController().Select(oTextCursor)
-					yankSelection(bIsDelete)
+					yankSelection(True)
+					If keyChar = "c" And bNoNextParagraph Then
+						oTextCursor.gotoStartOfParagraph(False)
+						oTextCursor.Text.insertControlCharacter(oTextCursor, _
+							com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK, False)
+						getCursor().gotoRange(oTextCursor.getStart(), False)
+						getCursor().goLeft(1, False)
+					End If
 				Else
 					yankSelection(bIsDelete)
 					removeRow()
@@ -1665,10 +1703,9 @@ Function ProcessSpecialKey(keyChar)
 
     ElseIf keyChar = "s" Or keyChar = "S" Or keyChar = "x" Or keyChar = "X" Then
         If APP() <> "CALC" Then
-            dim bNoNextParagraph
+            oTextCursor = getTextCursor()
             If MODE = M_NORMAL Then
                 dim length
-                oTextCursor = getTextCursor()
                 oTextCursor.collapseToStart()
                 getCursor().collapseToStart()
                 If keyChar = "x" or keyChar = "s" Then
@@ -1691,18 +1728,13 @@ Function ProcessSpecialKey(keyChar)
                 End If
             End If
 
-            If keyChar = "S" Then
-                oTextCursor = getTextCursor()
-                If NO_NEXT_PARAGRAPH Then
-                    yankSelection(False)
-                    simulate_KeyPress_Char("RETURN")
-                    Wait 5
-                    getCursor().goUp(1, False)
-                Else
-                    yankSelection(True)
-                End If
-            Else
-                yankSelection(True)
+            yankSelection(True)
+            If keyChar = "S" And bNoNextParagraph Then
+                oTextCursor.gotoStartOfParagraph(False)
+                oTextCursor.Text.insertControlCharacter(oTextCursor, _
+                    com.sun.star.text.ControlCharacter.PARAGRAPH_BREAK, False)
+                getCursor().gotoRange(oTextCursor.getStart(), False)
+                getCursor().goLeft(1, False)
             End If
 
             If keyChar = "s" or keyChar = "S" Then
@@ -1772,7 +1804,10 @@ Function ProcessMovementModifierKey(keyChar)
 End Function
 
 
-Function ProcessSearchKey(oTextCursor, searchType, keyChar, bExpand)
+Function ProcessSearchKey(oTextCursor, searchType, keyChar, bExpand, Optional bNewCode)
+
+	If IsMissing(bNewCode) Then bNewCode = False
+
     '-----------
     ' Searching
     '-----------
@@ -1781,18 +1816,24 @@ Function ProcessSearchKey(oTextCursor, searchType, keyChar, bExpand)
 	If APP() <> "CALC" Then
 		bIsBackwards = (searchType = "F" Or searchType = "T")
 
+		dim bExpandNewCode : bExpandNewCode = False
+
+		If MODE = M_VISUAL Or MODE = M_VISUAL_LINE Then
+			bExpandNewCode = True
+		End If
+
 		If Not bIsBackwards Then
-			' VISUAL mode will goRight AFTER the selection
-			If MODE <> M_VISUAL And MODE <> M_VISUAL_LINE Then
-				' Start searching from next character
-				oTextCursor.goRight(1, bExpand)
-			End If
+			oTextCursor.goRight(1, bExpandNewCode)
+			If searchType = "t" Then oTextCursor.goRight(1, bExpandNewCode)
 
 			oStartRange = oTextCursor.getEnd()
-			' Go back one
-			oTextCursor.goLeft(1, bExpand)
 		Else
-			oStartRange = oTextCursor.getStart()
+			getCursor().gotoRange(oTextCursor.getStart(), False)
+			If searchType = "T" Then getCursor().goLeft(1, False)
+			oStartRange = getCursor().getStart()
+
+			getCursor().gotoRange(oTextCursor.getStart(), False)
+			getCursor().gotoRange(oTextCursor.getEnd(), True)
 		End If
 
 		oSearchDesc = thisComponent.createSearchDescriptor()
@@ -1803,42 +1844,96 @@ Function ProcessSearchKey(oTextCursor, searchType, keyChar, bExpand)
 		oFoundRange = thisComponent.findNext( oStartRange, oSearchDesc )
 
 		If not IsNull(oFoundRange) Then
-			dim oText, foundPos, curPos, bSearching
+			
+			dim oText
 			oText = oTextCursor.getText()
-			foundPos = oFoundRange.getStart()
-
-			' Unfortunately, we must go go to this "found" position one character at
-			' a time because I have yet to find a way to consistently move the
-			' Start range of the text cursor and leave the End range intact.
-			If bIsBackwards Then
-				curPos = oTextCursor.getEnd()
-			Else
-				curPos = oTextCursor.getStart()
-			End If
-			do until oText.compareRegionStarts(foundPos, curPos) = 0
-				If bIsBackwards Then
-					bSearching = oTextCursor.goLeft(1, bExpand)
-					curPos = oTextCursor.getStart()
+			' --- New code works for docuemnts containing tables
+			If bNewCode Then
+				Dim oTable, oCell, oTextCursor2, oFoundTableName, oCurTableName
+				Dim bFoundHasTable : bFoundHasTable = False
+				If Not isempty(oFoundRange.TextTable) Then
+					oFoundTableName = oFoundRange.TextTable.LinkDisplayName
+					oTable = ThisComponent.TextTables.getByName(oFoundTableName)
+					oCell = oTable.getCellByName(oFoundRange.Cell.CellName)
+					oTextCursor2 = oCell.createTextCursorByRange(oFoundRange)
+					bFoundHasTable = True
 				Else
-					bSearching = oTextCursor.goRight(1, bExpand)
+					oTextCursor2 = ThisComponent.getText().createTextCursorByRange(oFoundRange)
+				End If
+
+				If MODE = M_NORMAL Then
+					oTextCursor2.collapseToStart()
+					If searchType = "t" Then
+						oTextCursor2.goLeft(1, False)
+					ElseIf searchType = "T" Then
+						oTextCursor2.goRight(1, False)
+					End If
+					getCurrentController().Select(oTextCursor2)
+					'oTextCursor.gotoRange(oTextCursor2, False)
+				ElseIf MODE = M_VISUAL or MODE = M_VISUAL_LINE Then
+					dim bProceedCurMove : bProceedCurMove = False
+					If Not isempty(oTextCursor.TextTable) Then
+						oCurTableName = oTextCursor.TextTable.LinkDisplayName
+						If bFoundHasTable And oCurTableName = oFoundTableName Then
+							bProceedCurMove = True
+						End If
+					Else
+						If Not bFoundHasTable Then bProceedCurMove = True
+					End If
+
+					If bProceedCurMove Then
+						If Not bIsBackwards Then
+							oTextCursor.collapseToStart()
+							oTextCursor2.collapseToEnd()
+							If searchType = "t" Then oTextCursor2.goLeft(1, False)
+							oTextCursor.gotoRange(oTextCursor2, True)
+							getCurrentController().Select(oTextCursor)
+						Else
+							oTextCursor.collapsetoEnd()
+							oTextCursor2.collapsetoStart()
+							If searchType = "T" Then oTextCursor2.goRight(1, False)
+							oTextCursor.gotoRange(oTextCursor2, True)
+							getCurrentController().Select(oTextCursor)
+						End If
+					End If
+
+				End If
+			
+			' --- Old code is kept for searching (), {}..., glitchy
+			Else
+				dim foundPos, curPos, bSearching
+				foundPos = oFoundRange.getStart()
+
+				' Unfortunately, we must go go to this "found" position one character at
+				' a time because I have yet to find a way to consistently move the
+				' Start range of the text cursor and leave the End range intact.
+				If bIsBackwards Then
 					curPos = oTextCursor.getEnd()
+				Else
+					curPos = oTextCursor.getStart()
 				End If
+				do until oText.compareRegionStarts(foundPos, curPos) = 0
+					If bIsBackwards Then
+						bSearching = oTextCursor.goLeft(1, bExpand)
+						curPos = oTextCursor.getStart()
+					Else
+						bSearching = oTextCursor.goRight(1, bExpand)
+						curPos = oTextCursor.getEnd()
+					End If
 
-				' Prevent infinite if unable to find, but shouldn't ever happen (?)
-				If Not bSearching Then
-					bMatched = False
-					Exit Do
+					' Prevent infinite if unable to find, but shouldn't ever happen (?)
+					If Not bSearching Then
+						bMatched = False
+						Exit Do
+					End If
+				Loop
+
+				If searchType = "t" Then
+					oTextCursor.goLeft(1, bExpand)
+				ElseIf searchType = "T" Then
+					oTextCursor.goRight(1, bExpand)
 				End If
-			Loop
-
-			If searchType = "t" Then
-				oTextCursor.goLeft(1, bExpand)
-			ElseIf searchType = "T" Then
-				oTextCursor.goRight(1, bExpand)
 			End If
-
-		Else
-			bMatched = False
 		End If
 
 		' If matched, then we want to select PAST the character
@@ -1847,7 +1942,7 @@ Function ProcessSearchKey(oTextCursor, searchType, keyChar, bExpand)
 			oTextCursor.goRight(1, bExpand)
 		End If
 	Else
-    bMatched = False
+		bMatched = False
 	End If
 
     ProcessSearchKey = bMatched
@@ -1961,7 +2056,8 @@ Function ProcessMovementKey(keyChar, Optional bExpand, Optional keyModifiers, Op
 			' f,F,t,T searching
 		Case "f", "t", "F", "T":
 		'If APP() <> "CALC" Then
-			bMatched = ProcessSearchKey(oTextCursor, getMovementModifier(), keyChar, bExpand)
+			bMatched = ProcessSearchKey(oTextCursor, getMovementModifier(), keyChar, bExpand, True)
+			bSetCursor = False
 			LAST_FTSEARCH_MOVEMENTMODIFIER = getMovementModifier()
 			LAST_FTSEARCH_KEYCHAR = oEvent.keyChar
 		'End If
@@ -1981,22 +2077,21 @@ Function ProcessMovementKey(keyChar, Optional bExpand, Optional keyModifiers, Op
     ' Search repetition
 	ElseIf keyChar = ";" Then
 			
-		bMatched = ProcessSearchKey(oTextCursor, LAST_FTSEARCH_MOVEMENTMODIFIER, LAST_FTSEARCH_KEYCHAR, bExpand)
+		bMatched = ProcessSearchKey(oTextCursor, LAST_FTSEARCH_MOVEMENTMODIFIER, LAST_FTSEARCH_KEYCHAR, bExpand, True)
+		bSetCursor = False
 			
 		If Not bMatched Then
 			bSetCursor = False
 		End If
 	
     ElseIf keyChar = "n" or keyChar = "N" Then
-        If keyChar = "n" Then
-            ' MsgBox("n: " & LAST_SEARCH)
-            ' bMatched  = ProcessSearchKey(oTextCursor, "f", LAST_SEARCH_CHAR, bExpand)
-            searchAndSet(getTextCursor(), LAST_SEARCH, False) 
-        ElseIf keyChar = "N" Then
-            ' MsgBox("N: " & LAST_SEARCH)
-            ' bMatched  = ProcessSearchKey(oTextCursor, "F", LAST_SEARCH_CHAR, bExpand) 
-			searchAndSet(getTextCursor(), LAST_SEARCH, True)
-        End If
+		dim bIsBackwards
+		bIsBackwards = LAST_SEARCH_IS_BACKWARDS
+        If keyChar = "N" Then
+			bIsBackwards = Not bIsBackwards
+		End If
+
+		searchAndSet(getTextCursor(), LAST_SEARCH, bIsBackwards) 
         bSetCursor = False
 
     ' Basic movement
@@ -2221,18 +2316,33 @@ Function ProcessMovementKey(keyChar, Optional bExpand, Optional keyModifiers, Op
         End If
     ElseIf keyChar = "G" Then
 		If APP() <> "CALC" Then
-        If MODE = M_VISUAL_LINE Then
-            ' If cursor is above Visual base line then move cursor down to it. 
-            Do Until getCursor().getPosition.Y() >= VISUAL_BASE.Y()
-                getCursor().goDown(1, False)
-            Loop
-            ' If cursor is on Visual base line then move it to start of line.
-            If getCursor().getPosition.Y() = VISUAL_BASE.Y() Then
-                getCursor().gotoStartOfLine(False)
+            Dim page : page = getRawMultiplier()
+
+            If MODE = M_VISUAL_LINE Then
+                ' If cursor is above Visual base line then move cursor down to it. 
+                Do Until getCursor().getPosition.Y() >= VISUAL_BASE.Y()
+                    getCursor().goDown(1, False)
+                Loop
+                ' If cursor is on Visual base line then move it to start of line.
+                If getCursor().getPosition.Y() = VISUAL_BASE.Y() Then
+                    getCursor().gotoStartOfLine(False)
+                End If
             End If
-        End If
-        getCursor().gotoEnd(bExpand)
-        bSetCursor = False
+
+            If page = 0 Then
+                getCursor().gotoEnd(bExpand)
+                bSetCursor = False
+            Else
+                'If getCursor().jumpToPage(page) Then
+                getCursor().jumpToPage(page)
+                    oTextCursor.collapsetoStart()
+                    oTextCursor.gotoRange(getCursor().getStart(), bExpand)
+                'Else
+                '    getCursor().gotoEnd(bExpand)
+                '   bSetCursor = False
+                'End If
+            End If
+            resetMultiplier()
 		Else
 			If bExpand Then simulate_KeyPress_Char("DOWN", "SHIFT", "CTRL") Else simulate_KeyPress_Char("DOWN", "CTRL")
 		End If
